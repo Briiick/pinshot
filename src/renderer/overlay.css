@@ -1,0 +1,48 @@
+/* Mimics the macOS ⌘⇧4 selector: live-looking screen, crosshair cursor,
+   small stacked numbers by the cursor and a translucent grey selection. */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body {
+  margin: 0; width: 100%; height: 100%; overflow: hidden;
+  cursor: crosshair; user-select: none; background: #000;
+}
+/* Sized and positioned in JS to match the real screen exactly — never stretched,
+   even if the OS keeps the window slightly smaller (e.g. below the macOS menu bar). */
+#backdrop { position: fixed; left: 0; top: 0; pointer-events: none; }
+#selection {
+  position: fixed; pointer-events: none;
+  background: rgba(150, 150, 150, 0.28);
+  outline: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+#readout {
+  position: fixed; pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-end;
+  font: 500 11px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: rgba(0, 0, 0, 0.88);
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 1px #fff;
+}
+#hint {
+  position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); pointer-events: none;
+  padding: 9px 16px; border-radius: 10px; white-space: nowrap; color: #fff;
+  background: rgba(28, 28, 30, 0.88); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+  font: 13px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+#hint b { font-weight: 600; }
+
+/* Window mode (Space): a camera cursor and a blue tint over the window under it, like macOS. */
+body.window-mode {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='24' viewBox='0 0 28 24'><path d='M3 6h5l2-3h8l2 3h5v15H3z' fill='white' stroke='black' stroke-width='1.5' stroke-linejoin='round'/><circle cx='14' cy='13' r='4.5' fill='none' stroke='black' stroke-width='1.5'/></svg>") 14 12, pointer;
+}
+#window-highlight {
+  position: fixed; pointer-events: none;
+  background: rgba(10, 132, 255, 0.28);
+  box-shadow: inset 0 0 0 2px rgba(10, 132, 255, 0.85);
+}
+
+/* Live mode: the real screen shows through. The 1% tint keeps the window
+   hit-testable on macOS (fully transparent pixels let clicks fall through). */
+html:has(body.live) { background: transparent; }
+body.live { background: rgba(0, 0, 0, 0.01); }
+body.live #backdrop { display: none; }

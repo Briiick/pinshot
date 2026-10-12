@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file:; img-src 'self' data: blob:; script-src 'self'">
+  <title>PinShot GIF Export</title>
+</head>
+<body>
+  <!-- gifenc ships as CommonJS; give it an `exports` object to fill in. -->
+  <script src="gifenc-shim.js"></script>
+  <script src="../../node_modules/gifenc/dist/gifenc.js"></script>
+  <script src="convert.js"></script>
+</body>
+</html>

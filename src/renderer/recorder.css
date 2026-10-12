@@ -1,0 +1,33 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+#bar {
+  height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 14px;
+  border-radius: 12px; color: #fff; background: rgba(28, 28, 30, 0.92);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+  font: 600 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-app-region: drag;
+}
+#dot { width: 10px; height: 10px; border-radius: 50%; background: #ff3b30; animation: pulse 1.2s ease-in-out infinite; }
+body.starting #dot { background: #8e8e93; animation: none; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.flex { flex: 1; }
+button {
+  -webkit-app-region: no-drag; border: 0; cursor: pointer; color: #fff; font: inherit;
+  height: 30px; border-radius: 8px; background: rgba(255, 255, 255, 0.12);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+button:hover { background: rgba(255, 255, 255, 0.22); }
+#discard { width: 30px; }
+#discard svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+#stop { padding: 0 12px; background: #ff3b30; }
+#stop:hover { background: #ff5147; }
+#stop i { width: 9px; height: 9px; border-radius: 2px; background: #fff; }
+/* The source video only feeds the recorder; keep it alive but out of sight. */
+#video { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+/* Scrolling capture bar */
+#dot.scroll-dot { background: #0a84ff; animation: none; }
+body.lost #dot.scroll-dot { background: #ff9f0a; }
+#stop.done { background: #0a84ff; }
+#stop.done:hover { background: #2b95ff; }
+#status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }

@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+  <title>PinShot Quick Access</title>
+  <link rel="stylesheet" href="thumb.css">
+</head>
+<body class="flying">
+  <img id="shot" alt="Screenshot" draggable="false">
+  <div id="badge" class="video-only"><i></i><span id="duration"></span></div>
+  <div id="busy" hidden></div>
+  <div id="hover" draggable="true">
+    <button class="corner tl" data-action="close" title="Close">
+      <svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
+    </button>
+    <button class="corner tr image-only" data-action="pin" title="Pin to screen">
+      <svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/></svg>
+    </button>
+    <button class="corner bl image-only" data-action="edit" title="Annotate (double-click)">
+      <svg viewBox="0 0 24 24"><path d="M5 19l1-4L16 5l3 3L9 18zM14 7l3 3"/></svg>
+    </button>
+    <button class="corner br image-only" data-action="text" title="Copy text (OCR)">
+      <svg viewBox="0 0 24 24"><path d="M6 6h12M12 6v12M4 4v3M20 4v3M4 17v3h3M20 17v3h-3"/></svg>
+    </button>
+    <button class="corner bl wide video-only mp4-only" data-action="gif" title="Make a GIF">GIF</button>
+    <button class="corner tr video-only" data-action="reveal" title="Show in Finder">
+      <svg viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v9H4z"/></svg>
+    </button>
+    <div class="center">
+      <button class="pill image-only" data-action="copy">Copy</button>
+      <button class="pill video-only" data-action="open">Play</button>
+      <button class="pill" data-action="save">Save</button>
+    </div>
+  </div>
+  <script src="thumb.js"></script>
+</body>
+</html>

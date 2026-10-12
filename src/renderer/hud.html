@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>PinShot HUD</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+    #hud {
+      height: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 16px;
+      border-radius: 12px; color: #fff; background: rgba(28, 28, 30, 0.92);
+      box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+      font: 600 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      white-space: nowrap;
+    }
+    #spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .8s linear infinite; }
+    #spinner[hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="hud"><span id="spinner" hidden></span><span id="message"></span></div>
+  <script src="hud.js"></script>
+</body>
+</html>

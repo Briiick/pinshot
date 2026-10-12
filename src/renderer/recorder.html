@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'">
+  <title>PinShot Recording</title>
+  <link rel="stylesheet" href="recorder.css">
+</head>
+<body>
+  <div id="bar">
+    <span id="dot"></span>
+    <span id="time">0:00</span>
+    <span class="flex"></span>
+    <button id="discard" title="Discard recording">
+      <svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
+    </button>
+    <button id="stop" title="Stop recording (⌘⇧5)"><i></i>Stop</button>
+  </div>
+  <video id="video" muted playsinline></video>
+  <script src="recorder.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+  <title>PinShot Pin</title>
+  <link rel="stylesheet" href="pin.css">
+</head>
+<body>
+  <img id="shot" alt="Pinned screenshot" draggable="false">
+  <div id="toolbar">
+    <button data-action="close" title="Close (Esc)">✕</button>
+    <span class="spacer"></span>
+    <button data-action="edit" title="Annotate (double-click)">✎</button>
+    <button data-action="copy" title="Copy (⌘/Ctrl+C)">⧉</button>
+    <button data-action="save" title="Save As… (⌘/Ctrl+S)">⤓</button>
+  </div>
+  <div id="toast" hidden></div>
+  <script src="pin.js"></script>
+</body>
+</html>

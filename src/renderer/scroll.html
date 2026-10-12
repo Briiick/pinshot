@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'">
+  <title>PinShot Recording</title>
+  <link rel="stylesheet" href="recorder.css">
+</head>
+<body class="starting">
+  <div id="bar">
+    <span id="dot" class="scroll-dot"></span>
+    <span id="status">Scroll down slowly…</span>
+    <span class="flex"></span>
+    <button id="discard" title="Cancel">
+      <svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
+    </button>
+    <button id="stop" class="done" title="Finish (⌘⇧6)">Done</button>
+  </div>
+  <video id="video" muted playsinline></video>
+  <script src="stitch.js"></script>
+  <script src="scroll.js"></script>
+</body>
+</html>

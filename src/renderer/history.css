@@ -1,0 +1,38 @@
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; user-select: none; }
+header {
+  display: flex; align-items: center; gap: 10px; padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 1;
+}
+header h1 { margin: 0 8px 0 0; font-size: 17px; }
+.spacer { flex: 1; }
+main { flex: 1; overflow-y: auto; max-width: none; margin: 0; padding: 4px 20px 24px; }
+h2 { margin: 18px 0 10px 2px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.card { margin: 0; border-radius: 10px; outline: none; cursor: grab; }
+.card .shot {
+  position: relative; aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden;
+  background: repeating-conic-gradient(var(--panel) 0 25%, var(--hover) 0 50%) 0 0 / 16px 16px;
+  border: 1px solid var(--line);
+}
+.card:focus-visible .shot, .card.selected .shot { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,.45); }
+.card img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.badge {
+  position: absolute; left: 6px; bottom: 6px; padding: 1px 7px; border-radius: 6px;
+  background: rgba(0,0,0,.65); color: #fff; font-size: 11px; font-weight: 600;
+}
+.actions {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 5px; padding: 18px 6px 7px; background: linear-gradient(transparent, rgba(0,0,0,.7));
+  opacity: 0; transition: opacity .12s;
+}
+.card:hover .actions, .card:focus-within .actions { opacity: 1; }
+.card:hover .badge { opacity: 0; }
+.actions button { background: rgba(30,31,34,.92); color: #fff; border-color: rgba(255,255,255,.18); padding: 2px 8px; font-size: 12px; }
+.actions .danger:hover { background: var(--danger); }
+.card:not(.image) .image-only, .card.image .video-only { display: none; }
+figcaption { display: flex; justify-content: space-between; gap: 8px; padding: 6px 2px 0; font-size: 12px; color: var(--muted); }
+#empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding-bottom: 60px; }
+#empty svg { width: 56px; height: 56px; fill: none; stroke: var(--muted); stroke-width: 1.4; stroke-linejoin: round; margin-bottom: 8px; }
+#empty p { margin: 0; }
+.muted { color: var(--muted); }

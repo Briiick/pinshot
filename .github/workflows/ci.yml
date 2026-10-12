@@ -1,0 +1,77 @@
+name: PinShot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests (unit + end-to-end UI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install a virtual display and X11 tools
+        run: sudo apt-get update && sudo apt-get install -y xvfb x11-utils xdotool ffmpeg
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: End-to-end UI tests
+        env:
+          SHOTS: ${{ runner.temp }}/screenshots
+        run: npm run test:ui
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-screenshots
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: ignore
+
+  build-mac:
+    name: macOS build (.dmg)
+    needs: test
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build, sign and notarize when credentials are configured
+        env:
+          # Add these repository secrets to get a Developer ID-signed, notarized app:
+          #   MAC_CERT_P12_BASE64      base64 of your "Developer ID Application" .p12
+          #   MAC_CERT_PASSWORD        its password
+          #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   for notarization
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ] && [ -n "$APPLE_ID" ]; then
+            echo "Signing with Developer ID and notarizing"
+            npx electron-builder --mac --arm64 --x64 --publish never -c.mac.notarize=true
+          elif [ -n "$CSC_LINK" ]; then
+            echo "Signing with Developer ID (not notarized: APPLE_ID not set)"
+            npx electron-builder --mac --arm64 --x64 --publish never
+          else
+            echo "No signing certificate configured: ad-hoc signing"
+            unset CSC_LINK CSC_KEY_PASSWORD
+            CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --x64 --publish never -c.mac.identity=-
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PinShot-macOS
+          path: |
+            dist/*.dmg
+            dist/*.zip

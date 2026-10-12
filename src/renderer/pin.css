@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent;
+  user-select: none; cursor: grab;
+  font: 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+body.dragging { cursor: grabbing; }
+#shot { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none;
+  border: 1px solid rgba(127, 127, 127, 0.45);
+}
+body.focused::after { border-color: rgba(10, 132, 255, 0.85); }
+#toolbar {
+  position: fixed; top: 0; left: 0; right: 0; display: flex; gap: 4px; padding: 6px;
+  opacity: 0; transition: opacity 0.12s; pointer-events: none;
+  background: linear-gradient(rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0));
+}
+body:hover #toolbar { opacity: 1; pointer-events: auto; }
+body.dragging #toolbar, body.tiny #toolbar { opacity: 0; pointer-events: none; }
+.spacer { flex: 1; }
+button {
+  width: 24px; height: 24px; border: 0; border-radius: 6px; padding: 0; cursor: pointer;
+  color: #fff; background: rgba(30, 30, 32, 0.78); font-size: 13px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+button:hover { background: rgba(10, 132, 255, 0.95); }
+#toast {
+  position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%);
+  background: rgba(30, 30, 32, 0.88); color: #fff; padding: 6px 10px; border-radius: 6px;
+  pointer-events: none; white-space: nowrap;
+}

@@ -1,0 +1,44 @@
+:root {
+  --bg: #1e1f22; --panel: #2b2d31; --line: #3a3c42; --text: #e6e6e8; --muted: #9a9ca3;
+  --accent: #0a84ff; --danger: #ff453a; --hover: #3a3d44;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #ececf0; --panel: #fff; --line: #dcdde2; --text: #1d1e20; --muted: #6b6e76; --hover: #e9eaee; color-scheme: light; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 20px 20px 32px; }
+h1 { font-size: 20px; margin: 4px 0 16px; }
+h1 span { font-size: 12px; font-weight: 500; color: var(--muted); }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px 4px; }
+section { margin-bottom: 22px; }
+.group { background: var(--panel); border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+.group > .row:not([hidden]) ~ .row { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; min-height: 44px; }
+label.row { cursor: pointer; }
+.row small { color: var(--muted); margin-left: 6px; }
+.row code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); word-break: break-all; }
+.note { color: var(--muted); margin: 0 4px 8px; }
+.buttons { display: flex; gap: 6px; flex-shrink: 0; }
+button {
+  font: inherit; color: var(--text); background: var(--hover); border: 1px solid var(--line);
+  border-radius: 7px; padding: 4px 12px; cursor: pointer;
+}
+button:hover { filter: brightness(1.1); }
+button.link { background: none; border: 0; color: var(--accent); padding: 0; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; background: transparent; padding: 4px 14px; }
+.segmented button.on { background: var(--accent); color: #fff; }
+input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+kbd { font: inherit; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; }
+.shortcut {
+  min-width: 150px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  letter-spacing: .04em;
+}
+.shortcut.empty { color: var(--muted); }
+.shortcut.recording { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,.35); color: var(--accent); }
+.shortcut-cell { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.error { color: var(--danger); font-size: 12px; }

@@ -1,0 +1,67 @@
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body {
+  margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; user-select: none;
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+#shot {
+  display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none;
+  border-radius: 10px; transition: border-radius .2s;
+}
+body.flying #shot { border-radius: 2px; }
+body::after {
+  content: ""; position: fixed; inset: 0; border-radius: 10px; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35), inset 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+}
+body.flying::after { display: none; }
+
+#hover {
+  position: fixed; inset: 0; border-radius: 10px; opacity: 0; transition: opacity .12s;
+  background: rgba(20, 20, 22, 0.45); backdrop-filter: blur(1.5px);
+}
+body:not(.flying):hover #hover { opacity: 1; }
+body.flying #hover { pointer-events: none; }
+
+button {
+  border: 0; padding: 0; cursor: pointer; color: #fff; font: inherit;
+  background: rgba(255, 255, 255, 0.18); -webkit-backdrop-filter: blur(6px);
+}
+button:hover { background: rgba(255, 255, 255, 0.32); }
+.corner {
+  position: absolute; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(30, 30, 32, 0.75);
+}
+.corner:hover { background: rgba(10, 132, 255, 0.95); }
+.corner svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tl { top: 6px; left: 6px; }
+.br { bottom: 6px; right: 6px; }
+.corner.wide { width: auto; padding: 0 8px; border-radius: 999px; font-size: 10px; letter-spacing: 0.04em; }
+.tr { top: 6px; right: 6px; }
+.bl { bottom: 6px; left: 6px; }
+.center {
+  position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px;
+  align-items: center; justify-content: center; pointer-events: none;
+}
+.pill { pointer-events: auto; min-width: 72px; padding: 6px 12px; border-radius: 999px; }
+/* Short thumbnails: put Copy / Save side by side. */
+@media (max-height: 96px) {
+  .center { flex-direction: row; }
+  .pill { min-width: 0; padding: 5px 10px; }
+}
+
+/* Recordings: no annotate/pin, a play badge instead. */
+body:not(.video) .video-only, body.video .image-only { display: none; }
+#badge {
+  position: fixed; left: 8px; bottom: 8px; display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px 4px 6px; border-radius: 999px; color: #fff; pointer-events: none;
+  background: rgba(20, 20, 22, 0.72); font-size: 11px;
+}
+body.video #badge { display: flex; }
+#badge i { width: 0; height: 0; border-left: 8px solid #fff; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+body.flying #badge { opacity: 0; }
+body.gif .mp4-only { display: none; }
+body.gif #badge i { display: none; }
+#busy {
+  position: fixed; inset: 0; display: grid; place-items: center; border-radius: 10px;
+  background: rgba(20, 20, 22, 0.62); color: #fff; font-size: 12px; pointer-events: none;
+}

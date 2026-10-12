@@ -1,0 +1,75 @@
+{
+  "name": "pinshot",
+  "productName": "PinShot",
+  "version": "0.1.0",
+  "description": "Open-source screenshot tool for macOS: capture, quick-access thumbnails, pins, annotation, OCR, scrolling capture and screen recording.",
+  "main": "src/main.js",
+  "license": "MIT",
+  "author": "Alexander Bricken",
+  "repository": "github:Briiick/pinshot",
+  "scripts": {
+    "start": "electron .",
+    "check": "for f in src/*.js src/renderer/*.js; do node --check \"$f\" || exit 1; done",
+    "test": "node --test test/*.test.js",
+    "test:ui": "xvfb-run -a -s \"-screen 0 1440x900x24\" sh -c \"node test/smoke.mjs && node test/features.mjs && node test/multimonitor.mjs && node test/history.mjs\"",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac --arm64 --x64 --publish never",
+    "test:stress": "xvfb-run -a -s \"-screen 0 1440x900x24\" node test/stress.mjs"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "playwright-core": "^1.64.0"
+  },
+  "build": {
+    "appId": "dev.pinshot.app",
+    "productName": "PinShot",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/tesseract.js/**",
+      "node_modules/tesseract.js-core/**",
+      "node_modules/@tesseract.js-data/**"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSScreenCaptureUsageDescription": "PinShot needs screen recording access to take screenshots and recordings.",
+        "NSMicrophoneUsageDescription": "PinShot records your microphone only when \"Record Microphone\" is turned on."
+      }
+    },
+    "dmg": {
+      "title": "PinShot"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Graphics"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "gifenc": "^1.0.3",
+    "tesseract.js": "^7.0.0"
+  }
+}

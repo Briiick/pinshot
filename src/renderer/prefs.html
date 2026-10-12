@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>PinShot Preferences</title>
+  <link rel="stylesheet" href="prefs.css">
+</head>
+<body>
+  <main>
+    <h1>PinShot <span id="version"></span></h1>
+
+    <section>
+      <h2>General</h2>
+      <div class="group">
+      <label class="row" id="row-login"><span>Launch PinShot at login</span><input type="checkbox" data-pref="launchAtLogin"></label>
+      <label class="row mac-only"><span>Play shutter sound</span><input type="checkbox" data-pref="playSound"></label>
+      <label class="row">
+        <span>Freeze the screen while selecting <small>off: select over the live screen, like macOS</small></span>
+        <input type="checkbox" data-pref="freezeScreen">
+      </label>
+      <label class="row"><span>Copy screenshots to the clipboard</span><input type="checkbox" data-pref="copyToClipboard"></label>
+      <label class="row"><span>Save screenshots automatically</span><input type="checkbox" data-pref="autoSave"></label>
+      <div class="row">
+        <span>Save to <code id="folder"></code></span>
+        <span class="buttons"><button id="choose-folder">Change…</button><button id="open-folder">Open</button></span>
+      </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Recording</h2>
+      <div class="group">
+      <div class="row">
+        <span>Format</span>
+        <span class="segmented" data-pref="recordingFormat">
+          <button data-value="mp4">MP4</button><button data-value="gif">GIF</button>
+        </span>
+      </div>
+      <label class="row"><span>Record microphone</span><input type="checkbox" data-pref="recordMicrophone"></label>
+      <label class="row" id="row-system-audio">
+        <span>Record system audio <small class="mac-only">macOS 13 or later</small></span>
+        <input type="checkbox" data-pref="recordSystemAudio">
+      </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Shortcuts</h2>
+      <p class="note">Click a shortcut and press the new keys. <kbd>⌫</kbd> clears it, <kbd>Esc</kbd> cancels.</p>
+      <div id="shortcuts" class="group"></div>
+      <p class="note mac-only">
+        macOS keeps ⌘⇧3, ⌘⇧4 and ⌘⇧5 for its own screenshot tool.
+        <button class="link" id="shortcut-tip">How to hand them to PinShot…</button>
+      </p>
+    </section>
+  </main>
+  <script src="prefs.js"></script>
+</body>
+</html>

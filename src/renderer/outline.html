@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>PinShot Recording Outline</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    /* One edge of the dashed frame: white dashes on a dark line. */
+    body { background: repeating-linear-gradient(90deg, #fff 0 7px, #2c2c2e 7px 12px); }
+    body.v { background: repeating-linear-gradient(180deg, #fff 0 7px, #2c2c2e 7px 12px); }
+  </style>
+</head>
+<body>
+  <script>
+    if (new URLSearchParams(location.search).get('side') === 'v') document.body.className = 'v';
+  </script>
+</body>
+</html>
