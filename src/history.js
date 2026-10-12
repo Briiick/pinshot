@@ -160,7 +160,7 @@ class History {
   /** Drop entries whose file is gone, and previews that went missing. */
   async prune() {
     const exists = (file) => fs.promises.access(file).then(() => true, () => false);
-    const entries = this.entries;
+    const entries = this.entries.slice(); // add/remove may change this.entries while we wait
     const found = await Promise.all(entries.map((e) => Promise.all([exists(e.file), !!e.preview && exists(e.preview)])));
     let changed = false;
     const gone = new Set();

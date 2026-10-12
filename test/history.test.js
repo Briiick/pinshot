@@ -118,3 +118,27 @@ test('a removed entry whose preview was still being written leaves nothing behin
   await h.idle();
   assert.ok(!fs.existsSync(e.preview));
 });
+
+test('changes made while the list is being checked don’t mix up which entries are gone', async () => {
+  const dir = tmp();
+  const h = new History(dir);
+  const shots = [0, 1, 2, 3, 4].map((i) => {
+    const file = h.pathFor(`shot${i}.png`);
+    fs.writeFileSync(file, 'png');
+    return h.add({ file, preview: Buffer.from('p') });
+  });
+  await h.idle();
+  fs.unlinkSync(shots[4].file); // newest is gone from disk
+  const access = fs.promises.access;
+  fs.promises.access = (...args) => new Promise((resolve) => setTimeout(resolve, 20)).then(() => access(...args));
+  try {
+    const listing = h.list();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    h.remove(shots[2].id); // while list() is still checking files
+    const names = (await listing).map((e) => path.basename(e.file));
+    assert.deepEqual(names, ['shot3.png', 'shot1.png', 'shot0.png']);
+    assert.ok(fs.existsSync(shots[1].file), 'an entry that still exists keeps its file');
+  } finally {
+    fs.promises.access = access;
+  }
+});

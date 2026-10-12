@@ -447,9 +447,13 @@ async function grabDisplays(list) {
   };
   const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize });
   if (!sources.length) throw new Error('No screens available to capture');
+  // Without display_id, sources come one per display in getAllDisplays() order (list may be a subset).
+  const all = screen.getAllDisplays();
   list.forEach((d, i) => {
     const source =
-      sources.find((s) => String(s.display_id) === String(d.id)) || (sources.length === list.length ? sources[i] : sources[0]);
+      sources.find((s) => String(s.display_id) === String(d.id)) ||
+      (sources.length === all.length ? sources[all.findIndex((a) => a.id === d.id)] : null) ||
+      (sources.length === list.length ? sources[i] : sources[0]);
     let image = source.thumbnail;
     if (image.isEmpty()) throw new Error('Screen capture returned an empty image');
     // One size was requested for every display; bring each back to its native pixel size.

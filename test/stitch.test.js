@@ -171,3 +171,17 @@ test('findOffset: unchanged frames, hints and the tolerance', () => {
   const blank = new Float32Array(300 * SAMPLES).fill(255);
   assert.equal(findOffset(blank, blank, 300), -1);
 });
+
+test('findOffset: a small change near the top (hover, caret, spinner) doesn’t lose the match', () => {
+  let s = 3;
+  const rand = () => ((s = Math.imul(s, 1103515245) + 12345) >>> 0) / 2 ** 32;
+  const H = 400;
+  const page = new Float32Array(3000 * SAMPLES).map(() => 40 + rand() * 170);
+  const frame = (top) => page.slice(top * SAMPLES, (top + H) * SAMPLES).map((v) => v + (rand() - 0.5) * 2);
+  for (let k = 0; k < 20; k++) {
+    const prev = frame(100 + k * 30);
+    const next = frame(140 + k * 30);
+    for (let row = 34; row < 37; row++) for (let x = 10; x < 30; x++) next[row * SAMPLES + x] += 120;
+    assert.equal(findOffset(prev, next, H, { hint: 40 }), 40);
+  }
+});

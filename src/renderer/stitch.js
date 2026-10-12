@@ -80,9 +80,8 @@
     const limit = Math.floor(height * maxShift);
     const minRows = Math.max(12, height * 0.06);
     const detailed = detail || detailedRows(prevSig, height);
-    // Anything worse than the tolerance can't be used, so stop scoring it early.
     let best = -1;
-    let bestScore = tolerance;
+    let bestScore = Infinity;
     const score = (dy) => {
       // next row r shows what prev showed at row r + dy.
       const from = m;
@@ -114,7 +113,7 @@
     }
     if (hint > 0 && fits(hint)) consider(hint);
     for (let dy = 1; fits(dy); dy++) if (dy !== hint) consider(dy);
-    return best;
+    return bestScore <= tolerance ? best : -1;
   }
 
   class Stitcher {
