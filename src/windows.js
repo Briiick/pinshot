@@ -12,11 +12,12 @@ const run = (cmd, args, timeout = 3000) =>
   });
 
 // CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID)
-// returns on-screen windows front to back.
+// returns on-screen windows front to back. Only ordinary (layer 0), visible
+// windows are kept, here rather than in Node, so there's less to serialise.
 const MAC_SCRIPT = `
 ObjC.import('CoreGraphics');
 const list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
-JSON.stringify(list.map((w) => ({
+JSON.stringify(list.filter((w) => w.kCGWindowLayer === 0 && w.kCGWindowAlpha > 0).map((w) => ({
   id: w.kCGWindowNumber, pid: w.kCGWindowOwnerPID, layer: w.kCGWindowLayer, alpha: w.kCGWindowAlpha,
   owner: w.kCGWindowOwnerName || '', title: w.kCGWindowName || '', bounds: w.kCGWindowBounds,
 })));

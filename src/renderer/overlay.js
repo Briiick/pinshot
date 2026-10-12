@@ -26,7 +26,7 @@ let alignLoop = 0;
 let mode = 'shot';
 let windows = []; // on-screen windows, topmost first (global bounds)
 let windowMode = false;
-let windowsLoaded = false; // live mode: the window list arrives after we're on screen
+let windowsLoaded = false; // live mode: the window list is only fetched once Space is pressed
 let wantWindowMode = false; // Space was pressed before it arrived
 let pendingWindowClick = null; // …and a window was clicked before it arrived
 let hoveredWindow = null;
@@ -45,26 +45,46 @@ const onThisDisplay = (p) =>
  * Keep the frozen screenshot lined up with the real screen. The OS may place
  * or size this window a little differently from what was asked (macOS keeps
  * windows below the menu bar), so measure where the window really is.
+ * Returns whether anything moved.
  */
 function align() {
-  if (!display) return;
+  if (!display) return false;
   const x = display.x - window.screenX;
   const y = display.y - window.screenY;
-  if (x !== offset.x || y !== offset.y || !backdrop.style.width) {
-    offset = { x, y };
-    Object.assign(backdrop.style, {
-      left: `${x}px`,
-      top: `${y}px`,
-      width: `${display.width}px`,
-      height: `${display.height}px`,
-    });
-  }
+  if (x === offset.x && y === offset.y && backdrop.style.width) return false;
+  offset = { x, y };
+  Object.assign(backdrop.style, {
+    left: `${x}px`,
+    top: `${y}px`,
+    width: `${display.width}px`,
+    height: `${display.height}px`,
+  });
+  return true;
 }
 
+/**
+ * Re-measure every frame while the window may still be settling (being
+ * shown, moved back below the menu bar…), until it has stayed put for
+ * STABLE_FRAMES. It starts again when the window is shown or resized.
+ */
+const STABLE_FRAMES = 30; // ~0.5s
 function alignWhileVisible() {
-  align();
-  alignLoop = requestAnimationFrame(alignWhileVisible);
+  cancelAnimationFrame(alignLoop);
+  let still = 0;
+  const tick = () => {
+    still = align() ? 0 : still + 1;
+    alignLoop = still < STABLE_FRAMES ? requestAnimationFrame(tick) : 0;
+  };
+  tick();
 }
+
+// The main process has put this window on screen (where the OS may have nudged it).
+api.on('overlay:shown', () => {
+  if (document.body.dataset.ready) alignWhileVisible();
+});
+window.addEventListener('resize', () => {
+  if (document.body.dataset.ready) alignWhileVisible();
+});
 
 // The window is reused between captures: start each one from a clean slate.
 function reset() {
@@ -113,7 +133,6 @@ api.on('overlay:image', ({ width, height, bitmap, bgra, display: bounds, mode: m
       align();
       document.body.dataset.ready = '1';
       api.send('overlay:ready');
-      cancelAnimationFrame(alignLoop);
       alignWhileVisible();
     }),
   );
@@ -139,7 +158,6 @@ api.on('overlay:start', ({ display: bounds, mode: m }) => {
     align();
     document.body.dataset.ready = '1';
     api.send('overlay:ready');
-    cancelAnimationFrame(alignLoop);
     alignWhileVisible();
   });
 });
@@ -259,6 +277,7 @@ function toggleWindowMode() {
   if (!windowsLoaded) {
     // Switch on as soon as the window list arrives; show the camera cursor now.
     wantWindowMode = !wantWindowMode;
+    if (wantWindowMode) api.send('overlay:need-windows'); // main fetches it once per selection
     pendingWindowClick = null;
     document.body.classList.toggle('window-mode', wantWindowMode);
     selection.hidden = true;

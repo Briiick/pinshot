@@ -17,7 +17,7 @@ const {
   shell,
   systemPreferences,
 } = require('electron');
-const { spawn } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -107,9 +107,16 @@ if (!app.requestSingleInstanceLock()) {
 
 // Thumbnails, pins and editors come and go; the tray keeps the app alive.
 app.on('window-all-closed', () => {});
+// Let screenshots still being written to disk land before quitting.
+app.on('before-quit', (event) => {
+  if (!history?.pending.size) return;
+  event.preventDefault();
+  history.idle().then(() => app.quit());
+});
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   shutdownOcr();
+  history?.flush();
 });
 
 function init() {
@@ -126,13 +133,27 @@ function init() {
     if (!mediaSource) return callback({});
     callback(mediaSource.audio ? { video: mediaSource.source, audio: 'loopback' } : { video: mediaSource.source });
   });
+  // Display changes come in bursts (e.g. while the Dock or menu bar animates): handle the last one.
+  let displayTimer = null;
+  let displayKey = displayLayoutKey();
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) {
     screen.on(event, () => {
-      if (!selecting) syncOverlays();
-      layoutQuickStack();
+      clearTimeout(displayTimer);
+      displayTimer = setTimeout(() => {
+        if (!selecting) syncOverlays();
+        const key = displayLayoutKey();
+        if (key === displayKey) return;
+        displayKey = key;
+        layoutQuickStack();
+      }, 100);
     });
   }
   if (isMac && !settings.get('seenShortcutTip') && !process.env.PINSHOT_TEST) showShortcutTip();
+}
+
+/** What the quick-access stack's layout depends on: each display's bounds and work area. */
+function displayLayoutKey() {
+  return JSON.stringify(screen.getAllDisplays().map((d) => [d.id, d.bounds, d.workArea]));
 }
 
 function saveDirectory() {
@@ -577,7 +598,8 @@ async function startSelection(mode = 'shot') {
   }
 
   syncOverlays(list);
-  selecting = { mode, list, shots, windows, ready: new Set() };
+  // The frozen screen keeps the window list taken with it, so what's offered matches the picture.
+  selecting = { mode, list, shots, windows, windowsRequested: true, ready: new Set() };
   const bgra = bitmapIsBGRA();
   for (const d of list) {
     const win = overlays.get(d.id);
@@ -608,23 +630,29 @@ function sendWhenLoaded(win, channel, payload) {
 
 /**
  * Show the selectors straight away over the live screen. Nothing is grabbed
- * until a selection is made; the window list (for Space) arrives a moment later.
+ * until a selection is made, and the window list is only fetched if the user
+ * asks for window mode (Space): see loadWindowList.
  */
 function startLiveSelection(mode, list) {
   syncOverlays(list);
-  const token = {};
-  selecting = { mode, list, shots: null, windows: [], ready: new Set(), live: true, token };
+  selecting = { mode, list, shots: null, windows: [], windowsRequested: false, ready: new Set(), live: true };
   for (const d of list) {
     const win = overlays.get(d.id);
     win.setBounds(d.bounds);
     sendWhenLoaded(win, 'overlay:start', { display: d.bounds, mode });
   }
-  if (mode === 'scroll') return; // no window mode for scrolling capture
+}
+
+/** A selector switched to window mode before it had the window list: fetch it (once per selection). */
+function loadWindowList() {
+  const sel = selecting;
+  if (!sel || sel.windowsRequested || sel.mode === 'scroll') return; // no window mode for scrolling capture
+  sel.windowsRequested = true;
   listWindows(ownWindows()).then((windows) => {
-    trace(`live windows ${windows.length} current=${selecting?.token === token}`);
-    if (selecting?.token !== token) return;
-    selecting.windows = windows;
-    for (const d of list) sendWhenLoaded(overlays.get(d.id), 'overlay:windows', windows);
+    trace(`live windows ${windows.length} current=${selecting === sel}`);
+    if (selecting !== sel) return;
+    sel.windows = windows;
+    for (const d of sel.list) sendWhenLoaded(overlays.get(d.id), 'overlay:windows', windows);
   });
 }
 
@@ -644,6 +672,7 @@ function onOverlayReady(win) {
     w.show();
     // macOS can nudge a window below the menu bar as it appears; put it back.
     w.setBounds(d.bounds);
+    w.webContents.send('overlay:shown'); // it re-checks where it really ended up
     if (intersect(d.bounds, { x: cursor.x, y: cursor.y, width: 1, height: 1 })) focusWin = w;
   }
   (focusWin || overlays.get(selecting.list[0].id)).focus();
@@ -725,16 +754,51 @@ function composeRegion(rect, list, shots) {
   return { image: nativeImage.createFromBitmap(out, { width: plan.width, height: plan.height }), scale: plan.scale };
 }
 
-/** Capture a window itself (so overlapping windows don't show; macOS/Windows), else crop it from the screen. */
-async function windowImage(win, list, shots) {
-  const fallback = () => (trace('windowImage fallback'), composeRegion(win.bounds, list, shots));
+/**
+ * macOS: ask the window server for just this window (the id is its
+ * CGWindowNumber, from listWindows). Much cheaper than desktopCapturer, which
+ * makes a thumbnail of every window on screen. Null if it didn't work.
+ */
+async function macWindowImage(win) {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'pinshot-window-'));
+  const file = path.join(dir, 'window.png');
+  try {
+    trace('windowImage screencapture');
+    await new Promise((resolve, reject) =>
+      execFile('screencapture', ['-x', '-o', '-l', String(win.id), '-t', 'png', file], { timeout: 5000 }, (err) =>
+        err ? reject(err) : resolve(),
+      ),
+    );
+    const png = await fs.promises.readFile(file);
+    const image = nativeImage.createFromBuffer(png);
+    if (image.isEmpty()) return null;
+    return { image, png, scale: image.getSize().width / win.bounds.width };
+  } catch (err) {
+    console.warn('PinShot: screencapture of a window failed', err.message);
+    return null;
+  } finally {
+    fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Capture a window itself (so overlapping windows don't show; macOS/Windows),
+ * else crop it from the screen. `getShots` grabs (or returns) the screenshots
+ * of `list`, only called when they're needed.
+ */
+async function windowImage(win, list, getShots) {
+  const fallback = async () => (trace('windowImage fallback'), composeRegion(win.bounds, list, await getShots()));
   // Linux: Chromium's X11 window capturer is slow (seconds), rarely matches
   // xwininfo's ids, and can crash the app if a window it is tracking closes.
   // The window is on top where it was clicked, so crop it from the screen.
   if (process.platform === 'linux') return fallback();
+  if (isMac) {
+    const shot = await macWindowImage(win);
+    if (shot) return shot;
+  }
   try {
     trace('windowImage getSources');
-    const scale = Math.max(...list.filter((d) => intersect(d.bounds, win.bounds)).map((d) => shots.get(d.id).scale), 1);
+    const scale = Math.max(...list.map((d) => d.scaleFactor || 1), 1);
     const thumbnailSize = { width: Math.round(win.bounds.width * scale), height: Math.round(win.bounds.height * scale) };
     const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize });
     const source = sources.find((s) => s.id.startsWith(`window:${win.id}:`));
@@ -765,19 +829,21 @@ async function onOverlaySelect(payload) {
     if (rect.width < 2 || rect.height < 2) return;
   }
   const display = realDisplayFor(rect);
+  // Only the displays the selection touches are needed.
+  const touched = list.filter((d) => intersect(d.bounds, rect));
+  if (!touched.length && mode !== 'record' && mode !== 'scroll') return;
 
   try {
     if (mode === 'record') return startRecording(rect, { full: !!payload.full });
     if (mode === 'scroll') return startScrollingCapture(rect);
-    if (live) {
-      // Let the window server take the selectors off screen, then grab what's really there.
-      await new Promise((r) => setTimeout(r, isMac ? 150 : 100));
-      shots = await grabDisplays(list);
-    }
-    const shot = win ? await windowImage(win, list, shots) : composeRegion(rect, list, shots);
+    // Let the window server take the selectors off screen, then grab what's really there.
+    if (live) await new Promise((r) => setTimeout(r, isMac ? 150 : 100));
+    // Live: nothing has been grabbed yet (and a window capture may not need to).
+    const getShots = async () => shots || (shots = await grabDisplays(touched));
+    const shot = win ? await windowImage(win, touched, getShots) : composeRegion(rect, touched, await getShots());
     if (!shot) return;
-    if (mode === 'text') return captureTextFrom(shot.image, shot.scale);
-    finishCapture(shot.image, shot.scale, rect, display);
+    if (mode === 'text') return captureTextFrom(shot.image, shot.scale, shot.png);
+    finishCapture(shot.image, shot.scale, rect, display, shot.png);
   } catch (err) {
     showError('Capture failed', err);
   }
@@ -801,33 +867,52 @@ function newCapture(fields) {
   return capture;
 }
 
-/** Copy/save a new screenshot according to settings, then fly it into the corner. */
-function finishCapture(image, scale, origin, display) {
+/**
+ * Fly a new screenshot into the corner, then copy/save it according to
+ * settings. `png` is its PNG encoding, if the caller already has one. The
+ * thumbnail starts loading first; files are written in the background.
+ */
+function finishCapture(image, scale, origin, display, png = null) {
   trace('finishCapture');
   playShutter();
-  const png = image.toPNG();
-  if (settings.get('copyToClipboard')) copyPng(png);
-
-  let filePath = null;
-  if (settings.get('autoSave')) {
-    try {
-      const dir = saveDirectory();
-      fs.mkdirSync(dir, { recursive: true });
-      filePath = path.join(dir, captureFileName());
-      fs.writeFileSync(filePath, png);
-    } catch (err) {
-      filePath = null;
-      console.error('PinShot: auto-save failed', err);
-    }
-  }
+  png = png || image.toPNG();
+  const filePath = settings.get('autoSave') ? path.join(saveDirectory(), captureFileName()) : null;
   const capture = newCapture({ image, png, scale, filePath, origin, displayId: display.id });
-  rememberCapture(capture);
   createThumb(capture);
+  if (settings.get('copyToClipboard')) copyPng(png);
+  if (filePath) {
+    captureIo(capture, async () => {
+      try {
+        await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+        await history.write(filePath, png);
+      } catch (err) {
+        console.error('PinShot: auto-save failed', err);
+        // Keep it in the history folder instead, as if auto-save were off.
+        if (capture.filePath === filePath) capture.filePath = null;
+        await keepInHistory(capture).catch((e) => console.error('PinShot: could not add to history', e));
+      }
+    });
+  }
+  rememberCapture(capture);
   return capture;
 }
 
-function dataUrl(capture) {
-  return `data:image/png;base64,${capture.png.toString('base64')}`;
+/**
+ * Disk work for one capture, off the main thread and in order (so an
+ * annotated version can't be overtaken by the original). `capture.io` settles
+ * once everything queued so far is done.
+ */
+function captureIo(capture, fn) {
+  capture.io = history.track((capture.io || Promise.resolve()).then(fn));
+  return capture.io;
+}
+
+/** A screenshot that wasn't auto-saved: keep a copy in the history folder. Resolves once written. */
+function keepInHistory(capture) {
+  const file = history.pathFor(captureFileName());
+  capture.historyFile = file;
+  if (capture.historyId) history.update(capture.historyId, { file });
+  return history.write(file, capture.png);
 }
 
 /** Forget a capture once nothing shows it any more. */
@@ -841,7 +926,8 @@ function windowFor(capture) {
 }
 
 /** Make sure the capture exists on disk (for drag & drop), returning the path. */
-function ensureFile(capture) {
+async function ensureFile(capture) {
+  await capture.io; // it may still be being written
   if (capture.filePath && fs.existsSync(capture.filePath)) return capture.filePath;
   if (capture.historyFile && fs.existsSync(capture.historyFile)) return capture.historyFile;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinshot-'));
@@ -864,7 +950,7 @@ async function saveCaptureAs(capture, parent) {
     : await dialog.showSaveDialog(options);
   if (canceled || !filePath) return false;
   const jpeg = /\.jpe?g$/i.test(filePath);
-  fs.writeFileSync(filePath, jpeg ? capture.image.toJPEG(92) : capture.png);
+  await fs.promises.writeFile(filePath, jpeg ? capture.image.toJPEG(92) : capture.png);
   return true;
 }
 
@@ -926,10 +1012,10 @@ function showHud(message, { ms = 1800, busy = false } = {}) {
   if (ms) win.hideTimer = setTimeout(() => !win.isDestroyed() && win.hide(), ms);
 }
 
-async function captureTextFrom(image, scale) {
+async function captureTextFrom(image, scale, png = null) {
   showHud('Recognizing text…', { ms: 0, busy: true });
   try {
-    const text = (await recognizeText(image, scale)).trim();
+    const text = (await recognizeText(image, scale, png)).trim();
     if (!text) {
       showHud('No text found');
       return '';
@@ -950,14 +1036,23 @@ async function captureTextFrom(image, scale) {
 // ---------------------------------------------------------------------------
 
 const easeOutCubic = (t) => 1 - (1 - t) ** 3;
+const sameRect = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
 /** Smoothly move/resize a window to `to`. Restarts cleanly if called mid-flight. */
 function animateBounds(win, to, duration = 280, done) {
   trace(`animate ${win.getTitle()}`);
   if (win.animation) clearInterval(win.animation);
+  win.animation = null;
+  win.animationTarget = null;
   const from = win.getBounds();
+  if (sameRect(from, to)) {
+    if (done) done();
+    return;
+  }
   const start = Date.now();
   const lerp = (a, b, k) => Math.round(a + (b - a) * k);
+  let last = from;
+  win.animationTarget = to;
   win.animation = setInterval(() => {
     if (win.isDestroyed()) {
       trace('animation: window gone');
@@ -966,15 +1061,19 @@ function animateBounds(win, to, duration = 280, done) {
     }
     const t = Math.min(1, (Date.now() - start) / duration);
     const k = easeOutCubic(t);
-    win.setBounds({
+    const next = {
       x: lerp(from.x, to.x, k),
       y: lerp(from.y, to.y, k),
       width: Math.max(1, lerp(from.width, to.width, k)),
       height: Math.max(1, lerp(from.height, to.height, k)),
-    });
+    };
+    // Near the end of the curve most ticks round to the same pixels.
+    if (!sameRect(next, last)) win.setBounds(next);
+    last = next;
     if (t >= 1) {
       clearInterval(win.animation);
       win.animation = null;
+      win.animationTarget = null;
       if (done) done();
     }
   }, 1000 / 60);
@@ -994,10 +1093,11 @@ function thumbBoxFor(capture) {
 function quickStackTargets() {
   const targets = new Map();
   const byDisplay = new Map();
+  const all = screen.getAllDisplays();
   for (const id of quickStack) {
     const capture = captures.get(id);
     if (!capture) continue;
-    const display = screen.getAllDisplays().find((d) => d.id === capture.displayId) || screen.getPrimaryDisplay();
+    const display = all.find((d) => d.id === capture.displayId) || screen.getPrimaryDisplay();
     if (!byDisplay.has(display.id)) byDisplay.set(display.id, { display, items: [] });
     byDisplay.get(display.id).items.push(capture);
   }
@@ -1013,7 +1113,9 @@ function layoutQuickStack() {
   const targets = quickStackTargets();
   for (const [id, bounds] of targets) {
     const thumb = captures.get(id)?.thumb;
-    if (thumb && !thumb.isDestroyed() && thumb.landed) animateBounds(thumb, bounds, 220);
+    if (!thumb || thumb.isDestroyed() || !thumb.landed) continue;
+    if (thumb.animation && sameRect(thumb.animationTarget, bounds)) continue; // already on its way there
+    animateBounds(thumb, bounds, 220);
   }
 }
 
@@ -1084,19 +1186,18 @@ function closeAllThumbs() {
   for (const id of [...quickStack]) closeThumb(captures.get(id));
 }
 
-/** Tell a thumbnail its capture changed (kind, file, busy state). */
+/** Tell a thumbnail its capture changed (kind, file, busy state). The image itself comes with 'image'. */
 function refreshThumb(capture) {
-  if (capture.thumb && !capture.thumb.isDestroyed()) capture.thumb.webContents.send('thumb:refresh', thumbInfo(capture));
+  if (capture.thumb && !capture.thumb.isDestroyed()) capture.thumb.webContents.send('thumb:refresh', captureMeta(capture));
 }
 
+function captureMeta(capture) {
+  return { scale: capture.scale, kind: capture.kind, duration: capture.duration, busy: capture.busy || null };
+}
+
+/** What a thumbnail, pin or editor needs to show a capture: the PNG bytes plus captureMeta. */
 function thumbInfo(capture) {
-  return {
-    dataUrl: dataUrl(capture),
-    scale: capture.scale,
-    kind: capture.kind,
-    duration: capture.duration,
-    busy: capture.busy || null,
-  };
+  return { png: capture.png, ...captureMeta(capture) };
 }
 
 /**
@@ -1105,13 +1206,21 @@ function thumbInfo(capture) {
  */
 async function dragThumbOut(capture, sender) {
   const win = capture.thumb;
-  const icon = capture.image.isEmpty() ? nativeImage.createEmpty() : capture.image.resize({ width: 96 });
-  sender.startDrag({ file: ensureFile(capture), icon });
+  sender.startDrag({ file: await ensureFile(capture), icon: dragIcon(capture) });
   await mouseReleased();
   if (!win || win.isDestroyed() || capture.thumb !== win) return;
   const dropped = !overOwnWindow(screen.getCursorScreenPoint());
   if (process.env.PINSHOT_TEST) global.pinshotTest.drags.push({ id: capture.id, dropped });
   if (dropped) sendToHistory(capture);
+}
+
+/** A small picture of the capture to drag around, made once (from the history preview when there is one). */
+function dragIcon(capture) {
+  if (!capture.dragIcon) {
+    const source = capture.preview && !capture.preview.isEmpty() ? capture.preview : capture.image;
+    capture.dragIcon = source.isEmpty() ? nativeImage.createEmpty() : source.resize({ width: 96 });
+  }
+  return capture.dragIcon;
 }
 
 /**
@@ -1157,34 +1266,44 @@ function sendToHistory(capture) {
 // Capture History
 // ---------------------------------------------------------------------------
 
-/** A small PNG for the History window. */
-function previewPng(image) {
+/** A small copy of an image for the History window (and drag icons), or null. */
+function previewImage(image) {
   if (image.isEmpty()) return null;
   const { width, height } = image.getSize();
   const k = Math.min(1, 480 / width, 320 / height);
-  return (k < 1 ? image.resize({ width: Math.round(width * k), height: Math.round(height * k), quality: 'good' }) : image).toPNG();
+  return k < 1 ? image.resize({ width: Math.round(width * k), height: Math.round(height * k), quality: 'good' }) : image;
+}
+
+/** Make the capture's history preview, once the thumbnail is under way. */
+function updatePreview(capture) {
+  history.track(
+    new Promise((resolve) => setTimeout(resolve, 0)).then(() => {
+      if (!capture.historyId) return;
+      capture.preview = previewImage(capture.image);
+      capture.dragIcon = null;
+      if (capture.preview) history.update(capture.historyId, {}, capture.preview.toPNG());
+    }),
+  );
 }
 
 /** Add a new capture to the history. Screenshots that weren't auto-saved get a copy there. */
 function rememberCapture(capture) {
   try {
-    let file = capture.filePath;
-    if (!file) {
-      file = history.pathFor(captureFileName());
-      fs.writeFileSync(file, capture.png);
-      capture.historyFile = file;
+    if (!capture.filePath) {
+      const written = keepInHistory(capture);
+      captureIo(capture, () => written.catch((err) => console.error('PinShot: could not add to history', err)));
     }
     const { width, height } = capture.image.getSize();
     const entry = history.add({
-      file,
+      file: capture.filePath || capture.historyFile,
       kind: capture.kind,
       width,
       height,
       scale: capture.scale,
       duration: capture.duration || 0,
-      preview: previewPng(capture.image),
     });
     capture.historyId = entry.id;
+    updatePreview(capture);
     historyChanged();
   } catch (err) {
     console.error('PinShot: could not add to history', err);
@@ -1195,8 +1314,8 @@ function historyChanged() {
   if (historyWindow && !historyWindow.isDestroyed()) historyWindow.webContents.send('history:changed');
 }
 
-function historyList() {
-  return history.list().map((e) => ({
+async function historyList() {
+  return (await history.list()).map((e) => ({
     id: e.id,
     kind: e.kind,
     name: path.basename(e.file),
@@ -1205,18 +1324,33 @@ function historyList() {
     height: e.height,
     scale: e.scale,
     duration: e.duration,
-    preview: e.preview && fs.existsSync(e.preview) ? `${pathToFileURL(e.preview).href}?v=${fs.statSync(e.preview).mtimeMs}` : null,
+    preview: e.preview ? `${pathToFileURL(e.preview).href}?v=${e.previewVersion || e.createdAt}` : null,
   }));
 }
 
+/** Load an image file; PNGs keep their bytes, so they needn't be encoded again. */
+async function loadImage(file) {
+  if (!file) return { image: nativeImage.createEmpty(), png: null };
+  if (!/\.png$/i.test(file)) return { image: nativeImage.createFromPath(file), png: null };
+  try {
+    const png = await fs.promises.readFile(file);
+    const image = nativeImage.createFromBuffer(png);
+    return { image, png: image.isEmpty() ? null : png };
+  } catch {
+    return { image: nativeImage.createEmpty(), png: null };
+  }
+}
+
 /** The live capture for a history entry, bringing it back if it has gone. */
-function captureFromHistory(id) {
+async function captureFromHistory(id) {
   const entry = history.get(id);
   if (!entry || !fs.existsSync(entry.file)) return null;
-  const existing = [...captures.values()].find((c) => c.historyId === id);
-  if (existing) return existing;
+  const live = () => [...captures.values()].find((c) => c.historyId === id);
+  if (live()) return live();
   const isImage = entry.kind === 'image';
-  const image = nativeImage.createFromPath(isImage ? entry.file : entry.preview || '');
+  await history.idle(); // its file or preview may still be being written
+  const { image, png } = await loadImage(isImage ? entry.file : entry.preview);
+  if (live()) return live(); // brought back by another request meanwhile
   if (isImage && image.isEmpty()) return null;
   // Videos only have a small poster, shown at 1×.
   const scale = isImage ? entry.scale || 1 : 1;
@@ -1228,7 +1362,7 @@ function captureFromHistory(id) {
   return newCapture({
     kind: entry.kind,
     image,
-    png: image.toPNG(),
+    png: png || image.toPNG(),
     scale,
     duration: entry.duration,
     filePath: owned ? null : entry.file,
@@ -1240,8 +1374,8 @@ function captureFromHistory(id) {
 }
 
 /** Do something with a history entry's capture, forgetting it again if nothing ends up showing it. */
-function withHistoryCapture(id, fn) {
-  const capture = captureFromHistory(id);
+async function withHistoryCapture(id, fn) {
+  const capture = await captureFromHistory(id);
   if (!capture) {
     historyChanged();
     return;
@@ -1429,19 +1563,19 @@ function finishRecording({ discard = false } = {}) {
       return;
     }
     playShutter();
-    const image = rec.poster ? nativeImage.createFromDataURL(rec.poster) : nativeImage.createEmpty();
+    const { image, png } = rec.poster ? imageFromRenderer(rec.poster) : { image: nativeImage.createEmpty(), png: null };
     const capture = newCapture({
       kind: 'video',
       duration: (Date.now() - rec.startedAt) / 1000,
       image,
-      png: image.toPNG(),
+      png: png || image.toPNG(),
       scale: rec.scale || rec.display.scaleFactor,
       filePath: rec.filePath,
       origin: rec.region,
       displayId: rec.display.id,
     });
-    rememberCapture(capture);
     createThumb(capture);
+    rememberCapture(capture);
     if (settings.get('recordingFormat') === 'gif') makeGif(capture, { replace: true });
   });
 }
@@ -1485,10 +1619,11 @@ function finishScrollingCapture(result) {
   for (const win of [sc.bar, ...(sc.outline || [])]) if (win && !win.isDestroyed()) win.destroy();
   refreshTrayMenu();
   if (!result) return;
-  const image = nativeImage.createFromBuffer(Buffer.from(result.png));
+  const png = Buffer.from(result.png);
+  const image = nativeImage.createFromBuffer(png);
   if (image.isEmpty()) return;
   const origin = { ...sc.region, height: Math.round(image.getSize().height / result.scale) };
-  finishCapture(image, result.scale, origin, sc.display);
+  finishCapture(image, result.scale, origin, sc.display, png);
 }
 
 // --- GIF export --------------------------------------------------------------
@@ -1553,8 +1688,8 @@ async function makeGif(capture, { replace = false } = {}) {
       refreshThumb(capture);
       const { image, png, scale, duration, origin, displayId } = capture;
       const gif = newCapture({ kind: 'gif', image, png, scale, duration, origin, displayId, filePath: gifPath });
-      rememberCapture(gif);
       createThumb(gif);
+      rememberCapture(gif);
     }
   } catch (err) {
     capture.busy = null;
@@ -1637,7 +1772,7 @@ function pinMenuTemplate(capture) {
   return [
     { label: 'Annotate…', click: () => openEditor(capture) },
     { label: 'Copy', click: () => copyPng(capture.png) },
-    { label: 'Copy Text', click: () => captureTextFrom(capture.image, capture.scale) },
+    { label: 'Copy Text', click: () => captureTextFrom(capture.image, capture.scale, capture.png) },
     { label: 'Save As…', click: () => saveCaptureAs(capture, capture.pin) },
     {
       label: 'Show in Folder',
@@ -1676,13 +1811,23 @@ function resetPinSize(capture) {
   });
 }
 
-/** Swap in an edited image everywhere the capture is shown. */
-function replaceImage(capture, image) {
+/**
+ * Image data from a renderer: PNG bytes, or (from older pages) a data URL.
+ * `png` is the bytes as given, so they needn't be encoded again.
+ */
+function imageFromRenderer(data) {
+  if (typeof data === 'string') return { image: nativeImage.createFromDataURL(data), png: null };
+  const png = Buffer.from(data);
+  return { image: nativeImage.createFromBuffer(png), png };
+}
+
+/** Swap in an edited image everywhere the capture is shown. `png` is its encoding, if already made. */
+function replaceImage(capture, image, png = null) {
   const oldSize = capture.image.getSize();
   capture.image = image;
-  capture.png = image.toPNG();
+  capture.png = png || image.toPNG();
+  capture.preview = capture.dragIcon = null;
   const { width, height } = image.getSize();
-  const url = dataUrl(capture);
 
   if (capture.pin && !capture.pin.isDestroyed()) {
     // Keep the pin's position and zoom level.
@@ -1695,30 +1840,35 @@ function replaceImage(capture, image) {
       width: Math.max(1, Math.round((width / capture.scale) * zoom)),
       height: Math.max(1, Math.round((height / capture.scale) * zoom)),
     });
-    capture.pin.webContents.send('image', url);
+    capture.pin.webContents.send('image', capture.png);
   }
   if (capture.thumb && !capture.thumb.isDestroyed()) {
-    capture.thumb.webContents.send('image', url);
+    capture.thumb.webContents.send('image', capture.png);
     layoutQuickStack();
   }
+  if (settings.get('copyToClipboard')) copyPng(capture.png);
 
-  if (capture.filePath) {
-    try {
-      fs.writeFileSync(capture.filePath, capture.png);
-    } catch (err) {
-      console.error('PinShot: could not update saved file', err);
-    }
+  const bytes = capture.png;
+  const { filePath, historyFile } = capture;
+  if (filePath) {
+    captureIo(capture, () =>
+      history.write(filePath, bytes).catch((err) => console.error('PinShot: could not update saved file', err)),
+    );
   }
   if (capture.historyId) {
     try {
-      if (capture.historyFile) fs.writeFileSync(capture.historyFile, capture.png);
-      history.update(capture.historyId, { width, height }, previewPng(image));
+      if (historyFile) {
+        captureIo(capture, () =>
+          history.write(historyFile, bytes).catch((err) => console.error('PinShot: could not update history', err)),
+        );
+      }
+      history.update(capture.historyId, { width, height });
+      updatePreview(capture);
       historyChanged();
     } catch (err) {
       console.error('PinShot: could not update history', err);
     }
   }
-  if (settings.get('copyToClipboard')) copyPng(capture.png);
 }
 
 // ---------------------------------------------------------------------------
@@ -1792,6 +1942,7 @@ function registerIpc() {
   ipcMain.on('overlay:select', (_e, payload) => onOverlaySelect(payload));
   ipcMain.on('overlay:cancel', closeSelection);
   ipcMain.on('overlay:drag', (event, payload) => relayToOtherOverlays(event.sender, 'overlay:remote', payload));
+  ipcMain.on('overlay:need-windows', () => loadWindowList());
   ipcMain.on('overlay:window-mode', (event, on) => {
     trace(`window-mode ${on}`);
     relayToOtherOverlays(event.sender, 'overlay:window-mode', on);
@@ -1818,7 +1969,7 @@ function registerIpc() {
   onCapture('thumb:open', (capture) => shell.openPath(capture.filePath));
   onCapture('thumb:reveal', (capture) => shell.showItemInFolder(capture.filePath));
   onCapture('thumb:edit', (capture) => openEditor(capture));
-  onCapture('thumb:text', (capture) => captureTextFrom(capture.image, capture.scale));
+  onCapture('thumb:text', (capture) => captureTextFrom(capture.image, capture.scale, capture.png));
   onCapture('thumb:gif', (capture) => makeGif(capture));
   onCapture('thumb:pin', (capture) => {
     createPin(capture);
@@ -1836,10 +1987,11 @@ function registerIpc() {
   onEntry('history:restore', (id) => withHistoryCapture(id, (c) => (c.thumb ? c.thumb.showInactive() : createThumb(c))));
   onEntry('history:edit', (id) => withHistoryCapture(id, openEditor));
   onEntry('history:pin', (id) => withHistoryCapture(id, (c) => c.kind === 'image' && createPin(c)));
-  onEntry('history:copy', (id) => {
+  onEntry('history:copy', async (id) => {
     const entry = entryFile(id);
     if (entry?.kind !== 'image') return;
-    copyPng(nativeImage.createFromPath(entry.file).toPNG());
+    const { image, png } = await loadImage(entry.file);
+    copyPng(png || image.toPNG());
     showHud('Copied to clipboard');
   });
   onEntry('history:open', (id) => entryFile(id) && shell.openPath(history.get(id).file));
@@ -1872,17 +2024,14 @@ function registerIpc() {
   ipcMain.on('history:open-folder', openSaveFolder);
 
   // Screen recording (the recording bar also does the recording)
-  ipcMain.handle('rec:init', () =>
-    recording
-      ? {
-          crop: recording.crop,
-          display: recording.display.bounds,
-          mic: recording.mic,
-          systemAudio: recording.systemAudio,
-          fps: 30,
-        }
-      : null,
-  );
+  ipcMain.handle('rec:init', () => {
+    if (!recording) return null;
+    const { crop, display, mic, systemAudio } = recording;
+    const info = { crop, display: display.bounds, mic, systemAudio, fps: 30 };
+    // A GIF ends up at most 800px wide and 12fps: recording more than that is wasted work.
+    if (settings.get('recordingFormat') === 'gif') Object.assign(info, { fps: 15, maxWidth: 1600 });
+    return info;
+  });
   ipcMain.on('rec:started', (_e, info) => onRecordingStarted(info));
   ipcMain.on('rec:chunk', (_e, chunk) => recording?.file?.write(Buffer.from(chunk)));
   ipcMain.on('rec:stopped', () => finishRecording());
@@ -1894,7 +2043,7 @@ function registerIpc() {
 
   // Scrolling capture (the bar also does the stitching)
   ipcMain.handle('scroll:init', () =>
-    scrolling ? { crop: scrolling.crop, display: scrolling.display.bounds, fps: 30 } : null,
+    scrolling ? { crop: scrolling.crop, display: scrolling.display.bounds, fps: 15 } : null,
   );
   ipcMain.on('scroll:done', (_e, result) => finishScrollingCapture(result));
   ipcMain.on('scroll:cancel', () => finishScrollingCapture(null));
@@ -1912,12 +2061,7 @@ function registerIpc() {
   ipcMain.on('gif:done', (event, bytes) => {
     const job = gifJobs.get(BrowserWindow.fromWebContents(event.sender)?.id);
     if (!job) return;
-    try {
-      fs.writeFileSync(job.gifPath, Buffer.from(bytes));
-      job.done();
-    } catch (err) {
-      job.done(err);
-    }
+    fs.promises.writeFile(job.gifPath, Buffer.from(bytes)).then(() => job.done(), (err) => job.done(err));
   });
   ipcMain.on('gif:error', (event, message) => gifJobs.get(BrowserWindow.fromWebContents(event.sender)?.id)?.done(message));
 
@@ -1948,9 +2092,13 @@ function registerIpc() {
   onCapture('pin:menu', (capture) => showPinMenu(capture));
 
   // Editor
-  ipcMain.on('editor:done', (event, url) => {
+  // The editor sends PNG bytes (a data URL from older pages): see imageFromRenderer.
+  ipcMain.on('editor:done', (event, data) => {
     const capture = captureFrom(event);
-    if (capture && url) replaceImage(capture, nativeImage.createFromDataURL(url));
+    if (capture && data) {
+      const { image, png } = imageFromRenderer(data);
+      replaceImage(capture, image, png);
+    }
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
   ipcMain.on('editor:cancel', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
@@ -1965,8 +2113,10 @@ function registerIpc() {
     });
     return response === 0;
   });
-  ipcMain.on('editor:copy', (_event, url) => copyPng(nativeImage.createFromDataURL(url).toPNG()));
-  ipcMain.handle('editor:save-as', async (event, url) => {
+  ipcMain.on('editor:copy', (_event, data) =>
+    copyPng(typeof data === 'string' ? nativeImage.createFromDataURL(data).toPNG() : Buffer.from(data)),
+  );
+  ipcMain.handle('editor:save-as', async (event, data) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const capture = captureFrom(event);
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
@@ -1978,8 +2128,8 @@ function registerIpc() {
       ],
     });
     if (canceled || !filePath) return false;
-    const image = nativeImage.createFromDataURL(url);
-    fs.writeFileSync(filePath, /\.jpe?g$/i.test(filePath) ? image.toJPEG(92) : image.toPNG());
+    const { image, png } = imageFromRenderer(data);
+    await fs.promises.writeFile(filePath, /\.jpe?g$/i.test(filePath) ? image.toJPEG(92) : png || image.toPNG());
     return true;
   });
 

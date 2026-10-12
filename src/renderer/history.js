@@ -47,30 +47,70 @@ function card(e) {
   return el;
 }
 
+// Cards and day sections are kept between renders and only added, removed or
+// replaced as entries change, so a new capture doesn't rebuild all 200 cards.
+const cards = new Map(); // entry id -> { el, sig }
+let days = new Map(); // day label -> { h2, grid, items }
+
+function cardFor(e) {
+  const sig = JSON.stringify(e);
+  let c = cards.get(e.id);
+  if (!c || c.sig !== sig) {
+    c = { el: card(e), sig };
+    cards.get(e.id)?.el.remove();
+    cards.set(e.id, c);
+  }
+  return c.el;
+}
+
+/** Make `parent`'s children exactly `nodes`, moving only the ones out of place. */
+function arrange(parent, nodes) {
+  nodes.forEach((node, i) => {
+    if (parent.children[i] !== node) parent.insertBefore(node, parent.children[i] || null);
+  });
+  while (parent.children.length > nodes.length) parent.lastElementChild.remove();
+}
+
 function render() {
   const shown = entries.filter((e) => filter === 'all' || (filter === 'image' ? e.kind === 'image' : e.kind !== 'image'));
   const focused = document.activeElement?.closest?.('.card')?.dataset.id;
-  list.textContent = '';
-  let group = null;
+  const ids = new Set(entries.map((e) => e.id));
+  for (const id of cards.keys()) if (!ids.has(id)) cards.delete(id);
+
+  const sections = new Map();
+  let section = null;
   let label = null;
   for (const e of shown) {
     const day = dayLabel(new Date(e.createdAt));
     if (day !== label) {
       label = day;
-      const h = document.createElement('h2');
-      h.textContent = day;
-      group = document.createElement('div');
-      group.className = 'grid';
-      list.append(h, group);
+      let key = day;
+      for (let n = 2; sections.has(key); n++) key = `${day} ${n}`;
+      section = days.get(key);
+      if (!section) {
+        const h2 = document.createElement('h2');
+        h2.textContent = day;
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        section = { h2, grid };
+      }
+      section.items = [];
+      sections.set(key, section);
     }
-    group.append(card(e));
+    section.items.push(cardFor(e));
   }
+  for (const { grid, items } of sections.values()) arrange(grid, items);
+  arrange(list, [...sections.values()].flatMap(({ h2, grid }) => [h2, grid]));
+  days = sections;
+
   empty.hidden = shown.length > 0;
   list.hidden = shown.length === 0;
-  if (focused) list.querySelector(`[data-id="${focused}"]`)?.focus();
+  if (focused && document.activeElement?.closest?.('.card')?.dataset.id !== focused) list.querySelector(`[data-id="${focused}"]`)?.focus();
 }
 
+let loadedAt = 0;
 async function load() {
+  loadedAt = Date.now();
   entries = await api.invoke('history:list');
   render();
 }
@@ -117,5 +157,9 @@ document.getElementById('open-folder').addEventListener('click', () => api.send(
 document.getElementById('clear').addEventListener('click', () => api.send('history:clear'));
 
 api.on('history:changed', load);
-window.addEventListener('focus', load); // files may have changed while we were away
+// history:changed covers everything PinShot does; this catches files deleted or
+// moved behind its back while we were away (at most every 30 s).
+window.addEventListener('focus', () => {
+  if (Date.now() - loadedAt > 30000) load();
+});
 load();

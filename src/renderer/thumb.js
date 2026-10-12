@@ -3,6 +3,13 @@
 const api = window.pinshot;
 const shot = document.getElementById('shot');
 
+/** Show PNG bytes from the main process, letting go of the previous image. */
+function showPng(png) {
+  const old = shot.src;
+  shot.src = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+  if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+}
+
 /** Show what kind of capture this is and whether it's busy (e.g. making a GIF). */
 function apply(data) {
   const moving = data.kind === 'video' || data.kind === 'gif';
@@ -26,12 +33,10 @@ api.invoke('capture:init').then((data) => {
     shot.onload = null;
     requestAnimationFrame(() => api.send('thumb:ready'));
   };
-  shot.src = data.dataUrl;
+  showPng(data.png);
 });
 api.on('thumb:refresh', apply);
-api.on('image', (dataUrl) => {
-  shot.src = dataUrl;
-});
+api.on('image', showPng);
 api.on('thumb:landed', () => document.body.classList.remove('flying'));
 
 document.getElementById('hover').addEventListener('click', (e) => {

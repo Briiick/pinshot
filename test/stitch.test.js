@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Stitcher } = require('../src/renderer/stitch');
+const { Stitcher, findOffset, signatures, SAMPLES } = require('../src/renderer/stitch');
 
 /** A tall "page" with text-like blocks, deterministic. */
 function makePage(width, height, seed = 7) {
@@ -85,4 +85,89 @@ test('respects the maximum height', () => {
   const st = new Stitcher({ maxHeight: 700 });
   for (let o = 0; o <= 2000; o += 100) st.add(frameAt(page, o, 300));
   assert.equal(st.result().height, 700);
+});
+
+/** `frame` squeezed to SAMPLES columns, like the renderer's GPU downscale (bilinear at each column centre). */
+function squeeze(frame) {
+  const { width, height, data } = frame;
+  const out = new Uint8ClampedArray(SAMPLES * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let s = 0; s < SAMPLES; s++) {
+      const fx = ((s + 0.5) * width) / SAMPLES - 0.5;
+      const x0 = Math.max(0, Math.floor(fx));
+      const x1 = Math.min(width - 1, x0 + 1);
+      const w = fx - x0;
+      for (let c = 0; c < 4; c++) {
+        out[(y * SAMPLES + s) * 4 + c] = data[(y * width + x0) * 4 + c] * (1 - w) + data[(y * width + x1) * 4 + c] * w;
+      }
+    }
+  }
+  return { width: SAMPLES, height, data: out };
+}
+
+/** Feed `frames` the way the renderer does; returns the stitcher and the rows it asked for. */
+function addBySignatures(st, frames) {
+  const fetched = [];
+  let sig = null;
+  for (const f of frames) {
+    sig = signatures(squeeze(f), sig); // one reused buffer
+    const rowBytes = f.width * 4;
+    st.addSignatures(sig, f.width, f.height, (y, count) => {
+      fetched.push([y, count]);
+      return f.data.slice(y * rowBytes, (y + count) * rowBytes);
+    });
+  }
+  return fetched;
+}
+
+test('stitches from squeezed signatures, reading only the rows it keeps', () => {
+  const page = makePage(320, 2400);
+  const view = 300;
+  const offsets = [0, 0, 37, 120, 121, 300, 480, 640, 800, 1000, 1001, 1180, 1380, 1560, 1760, 1950, 2100];
+  const st = new Stitcher();
+  const fetched = addBySignatures(st, offsets.map((o) => frameAt(page, o, view)));
+  const out = st.result();
+  assert.equal(out.height, 2100 + view);
+  assert.ok(sameRows(out, 0, page, 0, out.height), 'stitched image equals the page');
+  // The whole first frame, then just the newly revealed bottom rows; nothing for the repeated frame.
+  assert.deepEqual(fetched[0], [0, view]);
+  assert.deepEqual(fetched[1], [view - 37, 37]);
+  assert.equal(fetched.length, offsets.length - 1);
+  assert.equal(fetched.reduce((n, [, count]) => n + count, 0), out.height);
+});
+
+test('squeezed signatures ignore a sticky header too', () => {
+  const page = makePage(320, 1600, 11);
+  const st = new Stitcher();
+  addBySignatures(st, [0, 90, 200, 330, 500, 640].map((o) => frameAt(page, o, 300, 24)));
+  const out = st.result();
+  assert.equal(out.height, 640 + 300);
+  assert.ok(sameRows(out, 24, page, 24, out.height - 24));
+});
+
+test('stops reading frames once full', () => {
+  const page = makePage(200, 3000, 5);
+  const st = new Stitcher({ maxHeight: 650 });
+  const fetched = addBySignatures(st, [0, 100, 200, 300, 400, 500].map((o) => frameAt(page, o, 300)));
+  assert.equal(st.result().height, 650);
+  assert.equal(st.full, true);
+  assert.equal(fetched.length, 5);
+  assert.deepEqual(fetched.at(-1), [200, 50], 'the last block is cut to fit');
+  assert.ok(sameRows(st.result(), 0, page, 0, 650));
+  // Further frames aren't even looked at.
+  assert.deepEqual(st.add({ width: 0, height: 0, data: null }), { added: 0, height: 650, lost: false, full: true });
+});
+
+test('findOffset: unchanged frames, hints and the tolerance', () => {
+  const page = makePage(320, 1200, 9);
+  const sigAt = (o) => signatures(frameAt(page, o, 300));
+  const prev = sigAt(200);
+  assert.equal(findOffset(prev, sigAt(200), 300), 0);
+  assert.equal(findOffset(prev, sigAt(260), 300), 60);
+  // A hint only changes the search order, never the answer.
+  for (const hint of [-1, 1, 30, 60, 61, 254, 400]) assert.equal(findOffset(prev, sigAt(260), 300, { hint }), 60);
+  assert.equal(findOffset(prev, sigAt(800), 300, { hint: 60 }), -1, 'no overlap');
+  // A blank frame has nothing to match on.
+  const blank = new Float32Array(300 * SAMPLES).fill(255);
+  assert.equal(findOffset(blank, blank, 300), -1);
 });

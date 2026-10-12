@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Only these channels are reachable from the renderers.
 const SEND = new Set([
-  'overlay:ready', 'overlay:select', 'overlay:cancel', 'overlay:drag', 'overlay:window-mode',
+  'overlay:ready', 'overlay:select', 'overlay:cancel', 'overlay:drag', 'overlay:window-mode', 'overlay:need-windows',
   'thumb:ready', 'thumb:close', 'thumb:copy', 'thumb:save', 'thumb:edit', 'thumb:pin', 'thumb:drag',
   'thumb:open', 'thumb:reveal', 'thumb:text', 'thumb:gif',
   'scroll:done', 'scroll:cancel', 'scroll:error',
@@ -22,7 +22,7 @@ const INVOKE = new Set([
   'prefs:get', 'prefs:set', 'prefs:choose-folder', 'history:list',
 ]);
 const RECEIVE = new Set([
-  'overlay:image', 'overlay:start', 'overlay:windows', 'overlay:reset', 'overlay:remote', 'overlay:window-mode',
+  'overlay:image', 'overlay:start', 'overlay:windows', 'overlay:reset', 'overlay:remote', 'overlay:window-mode', 'overlay:shown',
   'image', 'thumb:landed', 'thumb:refresh', 'rec:stop', 'scroll:finish', 'hud:message', 'history:changed',
 ]);
 

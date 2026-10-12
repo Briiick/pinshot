@@ -28,21 +28,49 @@ async function start() {
   const sy = Math.round(cfg.crop.y * scale);
   const sw = Math.round(cfg.crop.width * scale);
   const sh = Math.round(cfg.crop.height * scale);
-  const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  stitcher = new window.PinShotStitch.Stitcher({ maxHeight: 30000 }); // canvas height limit is 32767
+  const { Stitcher, signatures, SAMPLES } = window.PinShotStitch;
+  stitcher = new Stitcher({ maxHeight: 30000 }); // canvas height limit is 32767
+
+  // Row signatures come from the area squeezed to SAMPLES columns: the GPU does
+  // the scaling and only that thin strip is read back. Full-resolution pixels
+  // are read only for rows the stitcher keeps. (Explicitly GPU-backed canvases:
+  // both draw straight from the video frame.)
+  const sigCanvas = document.createElement('canvas');
+  sigCanvas.width = SAMPLES;
+  sigCanvas.height = sh;
+  const sigCtx = sigCanvas.getContext('2d', { willReadFrequently: false });
+  sigCtx.imageSmoothingQuality = 'low'; // plain bilinear: rows stay independent
+  const rowCanvas = document.createElement('canvas');
+  rowCanvas.width = sw;
+  rowCanvas.height = sh;
+  const rowCtx = rowCanvas.getContext('2d', { willReadFrequently: false });
+  const rows = (y, count) => {
+    rowCtx.drawImage(video, sx, sy + y, sw, count, 0, 0, sw, count);
+    return rowCtx.getImageData(0, 0, sw, count).data;
+  };
+  let sig = null;
+  let shown = '';
+  let lost = false;
 
   const onFrame = () => {
     if (finished) return;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-    const r = stitcher.add(ctx.getImageData(0, 0, sw, sh));
-    document.body.classList.remove('starting');
-    if (r.full) status.textContent = 'Maximum height reached';
-    else if (r.lost) status.textContent = 'Too fast — scroll back a little';
-    else status.textContent = `${Math.round(r.height / scale).toLocaleString()} px · keep scrolling`;
-    document.body.classList.toggle('lost', !!r.lost);
+    if (!stitcher.full) {
+      sigCtx.drawImage(video, sx, sy, sw, sh, 0, 0, SAMPLES, sh);
+      sig = signatures(sigCtx.getImageData(0, 0, SAMPLES, sh), sig);
+      const r = stitcher.addSignatures(sig, sw, sh, rows);
+      // Only touch the DOM when something visible changed.
+      if (shown === '') document.body.classList.remove('starting'); // first frame
+      if (!!r.lost !== lost) document.body.classList.toggle('lost', (lost = !!r.lost));
+      const text = r.lost ? 'Too fast — scroll back a little' : `${Math.round(r.height / scale).toLocaleString()} px · keep scrolling`;
+      if (text !== shown) status.textContent = shown = text;
+    }
+    if (stitcher.full) {
+      // Nothing more fits: stop capturing and wait for Done.
+      status.textContent = shown = 'Maximum height reached';
+      document.body.classList.remove('lost');
+      for (const t of stream.getTracks()) t.stop();
+      return;
+    }
     video.requestVideoFrameCallback(onFrame);
   };
   video.requestVideoFrameCallback(onFrame);

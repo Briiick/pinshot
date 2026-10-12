@@ -4,12 +4,17 @@ const api = window.pinshot;
 const shot = document.getElementById('shot');
 const toast = document.getElementById('toast');
 
+/** Show PNG bytes from the main process, letting go of the previous image. */
+function showPng(png) {
+  const old = shot.src;
+  shot.src = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+  if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+}
+
 api.invoke('capture:init').then((data) => {
-  if (data) shot.src = data.dataUrl;
+  if (data) showPng(data.png);
 });
-api.on('image', (dataUrl) => {
-  shot.src = dataUrl;
-});
+api.on('image', showPng);
 
 let toastTimer;
 function flash(message) {
@@ -64,18 +69,30 @@ window.addEventListener('contextmenu', (e) => {
   api.send('pin:menu');
 });
 
-// Scroll to zoom, Alt/Option+scroll to change opacity.
+// Scroll to zoom, Alt/Option+scroll to change opacity. A trackpad fires many
+// wheel events per frame: add them up and tell the main process once a frame.
 let wheelAccum = 0;
+let zoomBy = 1;
+let opacityBy = 0;
+let wheelFrame = 0;
+function flushWheel() {
+  wheelFrame = 0;
+  if (zoomBy !== 1) api.send('pin:zoom', zoomBy);
+  if (opacityBy) api.send('pin:opacity-by', opacityBy);
+  zoomBy = 1;
+  opacityBy = 0;
+}
 window.addEventListener('wheel', (e) => {
   e.preventDefault();
   if (e.altKey) {
-    api.send('pin:opacity-by', e.deltaY > 0 ? -0.05 : 0.05);
-    return;
+    opacityBy += e.deltaY > 0 ? -0.05 : 0.05;
+  } else {
+    wheelAccum += e.deltaY;
+    if (Math.abs(wheelAccum) < 4) return; // ignore trackpad jitter
+    zoomBy *= wheelAccum < 0 ? 1.06 : 1 / 1.06;
+    wheelAccum = 0;
   }
-  wheelAccum += e.deltaY;
-  if (Math.abs(wheelAccum) < 4) return; // ignore trackpad jitter
-  api.send('pin:zoom', wheelAccum < 0 ? 1.06 : 1 / 1.06);
-  wheelAccum = 0;
+  if (!wheelFrame) wheelFrame = requestAnimationFrame(flushWheel);
 }, { passive: false });
 
 window.addEventListener('keydown', (e) => {

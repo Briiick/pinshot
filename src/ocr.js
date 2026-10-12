@@ -84,27 +84,27 @@ async function tesseractOcr(png) {
 
 /**
  * Recognise the text in a screenshot. `image` is an Electron NativeImage;
- * `scale` its pixel density. Small captures are upscaled first, which helps
- * both engines with UI-sized text.
+ * `scale` its pixel density; `png` its PNG bytes if already encoded. Vision
+ * reads the screenshot as it is; Tesseract does better on UI-sized text when
+ * small captures are upscaled first.
  */
-async function recognizeText(image, scale = 1) {
-  const { width, height } = image.getSize();
-  const factor = scale < 2 || height < 400 ? 2 : 1;
-  const prepared = factor > 1 ? image.resize({ width: width * factor, height: height * factor, quality: 'best' }) : image;
-  const png = prepared.toPNG();
-
+async function recognizeText(image, scale = 1, png = null) {
   if (process.platform === 'darwin' && !process.env.PINSHOT_FORCE_TESSERACT) {
-    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pinshot-ocr-')), 'capture.png');
-    fs.writeFileSync(file, png);
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'pinshot-ocr-'));
+    const file = path.join(dir, 'capture.png');
     try {
+      await fs.promises.writeFile(file, png || image.toPNG());
       return await visionOcr(file);
     } catch (err) {
       console.warn('PinShot: Vision OCR failed, using Tesseract', err.message);
     } finally {
-      fs.rmSync(path.dirname(file), { recursive: true, force: true });
+      fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }
-  return tesseractOcr(png);
+  const { width, height } = image.getSize();
+  const factor = scale < 2 || height < 400 ? 2 : 1;
+  if (factor === 1) return tesseractOcr(png || image.toPNG());
+  return tesseractOcr(image.resize({ width: width * factor, height: height * factor, quality: 'best' }).toPNG());
 }
 
 async function shutdownOcr() {

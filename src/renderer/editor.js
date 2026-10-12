@@ -33,6 +33,10 @@ const state = {
 
 let nextId = 1;
 const history = { stack: [], index: -1 };
+// Every change to state.doc goes through commit() or restore(), which bump
+// this so the cached base layer (see render) is rebuilt.
+let docVersion = 0;
+let frame = 0; // pending requestAnimationFrame for scheduleRender()
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -43,19 +47,26 @@ if (api.platform === 'darwin') document.body.classList.add('mac');
 api.invoke('capture:init').then((data) => {
   if (!data) return;
   scale = data.scale || 1;
+  // A blob: URL is same-origin, so the canvas stays readable for export.
+  const url = URL.createObjectURL(new Blob([data.png], { type: 'image/png' }));
   image.onload = () => {
+    URL.revokeObjectURL(url);
     state.doc.crop = { x: 0, y: 0, w: image.naturalWidth, h: image.naturalHeight };
     commit();
     layout();
   };
-  image.src = data.dataUrl;
+  image.onerror = () => URL.revokeObjectURL(url);
+  image.src = url;
 });
 
 buildColorPicker();
 setColor(COLORS[0]);
 setTool('arrow');
 setSize(2);
-window.addEventListener('resize', layout);
+let resizeFrame = 0;
+window.addEventListener('resize', () => {
+  if (!resizeFrame) resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; layout(); });
+});
 
 function buildColorPicker() {
   const wrap = $('colors');
@@ -146,12 +157,14 @@ function commit() {
   history.stack = history.stack.slice(0, history.index + 1);
   history.stack.push(JSON.stringify(state.doc));
   history.index = history.stack.length - 1;
+  docVersion++;
   updateHistoryButtons();
-  render();
+  scheduleRender();
 }
 
 function restore() {
   state.doc = JSON.parse(history.stack[history.index]);
+  docVersion++;
   if (!selectedShape()) state.selectedId = null;
   updateHistoryButtons();
   render();
@@ -297,8 +310,12 @@ function selectedShape() {
 function layout() {
   const crop = state.doc.crop;
   if (!crop) return;
-  canvas.width = Math.round(crop.w);
-  canvas.height = Math.round(crop.h);
+  // Assigning width/height reallocates and clears the canvas, even when it's the same size.
+  const resized = canvas.width !== Math.round(crop.w) || canvas.height !== Math.round(crop.h);
+  if (resized) {
+    canvas.width = Math.round(crop.w);
+    canvas.height = Math.round(crop.h);
+  }
   const stage = $('stage');
   const availW = stage.clientWidth - 40;
   const availH = stage.clientHeight - 40;
@@ -307,38 +324,77 @@ function layout() {
   const fit = Math.min(natural, availW / crop.w, availH / crop.h);
   canvas.style.width = `${Math.max(1, Math.floor(crop.w * fit))}px`;
   canvas.style.height = `${Math.max(1, Math.floor(crop.h * fit))}px`;
-  render();
+  // Only the selection and crop outlines depend on the zoom (they keep a fixed on-screen width).
+  if (resized || selectedShape() || state.pendingCrop) render();
   positionTextEditor();
 }
 
+/** Redraw on the next frame; pointer moves and key repeats call this many times per frame. */
+function scheduleRender() {
+  if (!frame) frame = requestAnimationFrame(render);
+}
+
+// The image plus every committed shape that paints before the one being drawn
+// or dragged. It only changes with the document, so a pointer move just copies
+// it and paints the live shape (and anything above it) on top.
+const baseLayer = { canvas: document.createElement('canvas'), key: null };
+
 function render() {
+  cancelAnimationFrame(frame);
+  frame = 0;
   if (!state.doc.crop || !image.naturalWidth) return;
   if (canvas.width !== Math.round(state.doc.crop.w) || canvas.height !== Math.round(state.doc.crop.h)) {
     layout();
     return;
   }
-  drawDocument(ctx, state.doc, { interactive: true });
+  const { crop } = state.doc;
+  const shapes = paintOrder(state.draft ? [...state.doc.shapes, state.draft] : state.doc.shapes, state.editingTextId);
+  const live = state.draft || (state.drag?.moved && selectedShape());
+  const split = live && shapes.includes(live) ? shapes.indexOf(live) : shapes.length;
+
+  const key = `${docVersion}:${split}:${state.editingTextId}:${canvas.width}x${canvas.height}`;
+  if (baseLayer.key !== key) {
+    baseLayer.key = key;
+    if (baseLayer.canvas.width !== canvas.width || baseLayer.canvas.height !== canvas.height) {
+      baseLayer.canvas.width = canvas.width;
+      baseLayer.canvas.height = canvas.height;
+    }
+    paint(baseLayer.canvas.getContext('2d'), crop, shapes.slice(0, split));
+    for (const id of pixelCache.keys()) if (!shapes.some((s) => s.id === id)) pixelCache.delete(id);
+  }
+
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(baseLayer.canvas, 0, 0);
+  ctx.translate(-crop.x, -crop.y);
+  // Painted onto the same pixels as before, so the highlighter still multiplies with what's beneath.
+  for (const s of shapes.slice(split)) drawShape(ctx, s);
+  const sel = selectedShape();
+  if (sel) drawSelection(ctx, sel);
+  if (state.pendingCrop) drawCropOverlay(ctx, normalize(state.pendingCrop));
+  ctx.restore();
 }
 
-function drawDocument(c, doc, { interactive }) {
-  const { crop } = doc;
+/** Shapes in the order they're painted. Redactions go first so they only ever cover the screenshot itself. */
+function paintOrder(shapes, skipId) {
+  return [
+    ...shapes.filter((s) => s.type === 'pixelate'),
+    ...shapes.filter((s) => s.type !== 'pixelate' && s.id !== skipId),
+  ];
+}
+
+function paint(c, crop, shapes) {
   c.save();
   c.clearRect(0, 0, c.canvas.width, c.canvas.height);
   c.translate(-crop.x, -crop.y);
   c.drawImage(image, 0, 0);
-
-  const shapes = [...doc.shapes];
-  if (interactive && state.draft) shapes.push(state.draft);
-  // Redactions go first so they only ever cover the screenshot itself.
-  for (const s of shapes) if (s.type === 'pixelate') drawShape(c, s);
-  for (const s of shapes) if (s.type !== 'pixelate' && !(interactive && s.id === state.editingTextId)) drawShape(c, s);
-
-  if (interactive) {
-    const sel = selectedShape();
-    if (sel) drawSelection(c, sel);
-    if (state.pendingCrop) drawCropOverlay(c, normalize(state.pendingCrop));
-  }
+  for (const s of shapes) drawShape(c, s);
   c.restore();
+}
+
+/** The finished image, without any editing UI. */
+function drawDocument(c, doc) {
+  paint(c, doc.crop, paintOrder(doc.shapes));
 }
 
 function drawShape(c, s) {
@@ -378,7 +434,7 @@ function drawShape(c, s) {
       break;
     case 'text': drawText(c, s); break;
     case 'step': drawStep(c, s); break;
-    case 'pixelate': drawPixelate(c, normalize(s)); break;
+    case 'pixelate': drawPixelate(c, s); break;
   }
   c.restore();
 }
@@ -466,19 +522,31 @@ function drawStep(c, s) {
   c.fillText(String(s.n), s.x, s.y + r * 0.05);
 }
 
-const pixelCanvas = document.createElement('canvas');
-function drawPixelate(c, r) {
+// Each redaction's shrunken copy of the image, redrawn only when its area changes.
+const pixelCache = new Map(); // shape id -> { key, canvas }
+function drawPixelate(c, s) {
+  const r = normalize(s);
   if (r.w < 1 || r.h < 1) return;
   const block = Math.max(6, Math.round(px(7)));
   const w = Math.max(1, Math.ceil(r.w / block));
   const h = Math.max(1, Math.ceil(r.h / block));
-  pixelCanvas.width = w;
-  pixelCanvas.height = h;
-  const pc = pixelCanvas.getContext('2d');
-  pc.imageSmoothingEnabled = true;
-  pc.drawImage(image, r.x, r.y, r.w, r.h, 0, 0, w, h);
+  const key = `${r.x},${r.y},${r.w},${r.h},${block}`;
+  let cached = pixelCache.get(s.id);
+  if (!cached) pixelCache.set(s.id, (cached = { key: null, canvas: document.createElement('canvas') }));
+  const small = cached.canvas;
+  if (cached.key !== key) {
+    cached.key = key;
+    if (small.width !== w || small.height !== h) {
+      small.width = w;
+      small.height = h;
+    }
+    const pc = small.getContext('2d');
+    pc.clearRect(0, 0, w, h);
+    pc.imageSmoothingEnabled = true;
+    pc.drawImage(image, r.x, r.y, r.w, r.h, 0, 0, w, h);
+  }
   c.imageSmoothingEnabled = false;
-  c.drawImage(pixelCanvas, 0, 0, w, h, r.x, r.y, r.w, r.h);
+  c.drawImage(small, 0, 0, w, h, r.x, r.y, r.w, r.h);
 }
 
 function drawSelection(c, s) {
@@ -597,7 +665,7 @@ canvas.addEventListener('pointermove', (e) => {
       moveShape(sel, p.x - state.drag.last.x, p.y - state.drag.last.y);
       state.drag.last = p;
       state.drag.moved = true;
-      render();
+      scheduleRender();
     }
     return;
   }
@@ -605,7 +673,7 @@ canvas.addEventListener('pointermove', (e) => {
     p = clampToCrop(p);
     state.pendingCrop.w = p.x - state.pendingCrop.x;
     state.pendingCrop.h = p.y - state.pendingCrop.y;
-    render();
+    scheduleRender();
     return;
   }
 
@@ -628,7 +696,7 @@ canvas.addEventListener('pointermove', (e) => {
       d.h = Math.sign(d.h || 1) * side;
     }
   }
-  render();
+  scheduleRender();
 });
 
 function snapAngle(origin, p) {
@@ -759,27 +827,29 @@ function cancelCrop() {
 // Export
 // ---------------------------------------------------------------------------
 
-function exportDataUrl() {
+/** The annotated image as PNG bytes. */
+async function exportPng() {
   commitText();
   const out = document.createElement('canvas');
   out.width = Math.round(state.doc.crop.w);
   out.height = Math.round(state.doc.crop.h);
-  drawDocument(out.getContext('2d'), state.doc, { interactive: false });
-  return out.toDataURL('image/png');
+  drawDocument(out.getContext('2d'), state.doc);
+  const blob = await new Promise((resolve) => out.toBlob(resolve, 'image/png'));
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
-function copyImage() {
-  api.send('editor:copy', exportDataUrl());
+async function copyImage() {
+  api.send('editor:copy', await exportPng());
   flash('Copied to clipboard');
 }
 
 async function saveImage() {
-  if (await api.invoke('editor:save-as', exportDataUrl())) flash('Saved');
+  if (await api.invoke('editor:save-as', await exportPng())) flash('Saved');
 }
 
-function done() {
+async function done() {
   if (state.pendingCrop) applyCrop();
-  api.send('editor:done', isDirty() ? exportDataUrl() : null);
+  api.send('editor:done', isDirty() ? await exportPng() : null);
 }
 
 async function cancel() {
