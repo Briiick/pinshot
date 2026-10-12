@@ -67,7 +67,7 @@ jobs:
           else
             echo "No signing certificate configured: ad-hoc signing"
             unset CSC_LINK CSC_KEY_PASSWORD
-            CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --x64 --publish never -c.mac.identity=-
+            CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --x64 --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false
           fi
       - uses: actions/upload-artifact@v4
         with:

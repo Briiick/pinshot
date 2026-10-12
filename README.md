@@ -23,6 +23,7 @@ pull the text out of it, or pin it on screen. **⌘⇧3** grabs the whole screen
 ## Run it
 
 ```bash
+git clone https://github.com/Briiick/pinshot.git
 cd pinshot
 npm install
 npm start
@@ -40,6 +41,20 @@ two one-time macOS steps:
    launch, and Preferences links back to them.
 
 To get a real `.app` / `.dmg`, run `npm run dist:mac` (see [Building a Mac app](#building-a-mac-app)).
+
+> [!WARNING]
+> **PinShot isn't signed or notarized by Apple.** There's no Developer ID behind it, so a build you
+> make yourself is only ad-hoc signed. That means:
+>
+> - **macOS will warn you the first time you open it** ("PinShot can't be opened because Apple cannot
+>   check it for malicious software", or "…is damaged" for a downloaded `.dmg`). Right-click the app →
+>   **Open**, or allow it under *System Settings → Privacy & Security*. For a copy you downloaded,
+>   `xattr -dr com.apple.quarantine /Applications/PinShot.app` clears the quarantine flag.
+> - **Every rebuild looks like a new app to macOS**, so it may ask for Screen Recording (and
+>   microphone) permission again after you update. If captures come back blank, remove PinShot from
+>   *Privacy & Security → Screen Recording*, add it again and restart it.
+> - **Only run builds you made yourself or got from a source you trust.** The app asks for
+>   screen-recording access, so read the code first. It's short.
 
 ## Features
 
@@ -125,8 +140,15 @@ npm run dist:mac          # dist/PinShot-<version>-arm64.dmg and -x64.dmg
 ```
 
 If a **Developer ID Application** certificate is in your keychain, electron-builder signs with it.
-Otherwise, build ad-hoc signed with `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac --
--c.mac.identity=-`, which runs on your own Mac (right-click → Open the first time).
+Otherwise, build ad-hoc signed, which runs on your own Mac (right-click → Open the first time):
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac -- -c.mac.identity=- -c.mac.hardenedRuntime=false
+```
+
+Turn the hardened runtime off for ad-hoc builds. It's only needed for notarization, and without a
+real signing identity it can stop the app from launching. For a quick local install, add `--dir` to
+skip the `.dmg` and copy `dist/mac-arm64/PinShot.app` into `/Applications`.
 
 **CI builds signed, notarized releases.** `.github/workflows/ci.yml` runs every test on Linux,
 then builds the macOS `.dmg`s and uploads them as artifacts. Add these repository secrets to have
